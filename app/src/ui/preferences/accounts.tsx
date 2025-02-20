@@ -5,7 +5,7 @@ import { lookupPreferredEmail } from '../../lib/email'
 import { assertNever } from '../../lib/fatal-error'
 import { Button } from '../lib/button'
 import { Row } from '../lib/row'
-import { DialogContent } from '../dialog'
+import { DialogContent, DialogPreferredFocusClassName } from '../dialog'
 import { Avatar } from '../lib/avatar'
 import { CallToAction } from '../lib/call-to-action'
 
@@ -29,18 +29,21 @@ export class Accounts extends React.Component<IAccountsProps, {}> {
       <DialogContent className="accounts-tab">
         <h2>GitHub.com</h2>
         {this.props.dotComAccount
-          ? this.renderAccount(this.props.dotComAccount)
+          ? this.renderAccount(this.props.dotComAccount, SignInType.DotCom)
           : this.renderSignIn(SignInType.DotCom)}
 
         <h2>GitHub Enterprise</h2>
         {this.props.enterpriseAccount
-          ? this.renderAccount(this.props.enterpriseAccount)
+          ? this.renderAccount(
+              this.props.enterpriseAccount,
+              SignInType.Enterprise
+            )
           : this.renderSignIn(SignInType.Enterprise)}
       </DialogContent>
     )
   }
 
-  private renderAccount(account: Account) {
+  private renderAccount(account: Account, type: SignInType) {
     const avatarUser: IAvatarUser = {
       name: account.name,
       email: lookupPreferredEmail(account),
@@ -48,15 +51,30 @@ export class Accounts extends React.Component<IAccountsProps, {}> {
       endpoint: account.endpoint,
     }
 
+    const accountTypeLabel =
+      type === SignInType.DotCom ? 'GitHub.com' : 'GitHub Enterprise'
+
+    const accounts = [
+      ...(this.props.dotComAccount ? [this.props.dotComAccount] : []),
+      ...(this.props.enterpriseAccount ? [this.props.enterpriseAccount] : []),
+    ]
+
+    // The DotCom account is shown first, so its sign in/out button should be
+    // focused initially when the dialog is opened.
+    const className =
+      type === SignInType.DotCom ? DialogPreferredFocusClassName : undefined
+
     return (
       <Row className="account-info">
-        <Avatar user={avatarUser} />
-        <div className="user-info">
-          <div className="name">{account.name}</div>
-          <div className="login">@{account.login}</div>
+        <div className="user-info-container">
+          <Avatar accounts={accounts} user={avatarUser} />
+          <div className="user-info">
+            <div className="name">{account.name}</div>
+            <div className="login">@{account.login}</div>
+          </div>
         </div>
-        <Button onClick={this.logout(account)}>
-          {__DARWIN__ ? 'Sign Out' : 'Sign out'}
+        <Button onClick={this.logout(account)} className={className}>
+          {__DARWIN__ ? 'Sign Out of' : 'Sign out of'} {accountTypeLabel}
         </Button>
       </Row>
     )
@@ -71,13 +89,16 @@ export class Accounts extends React.Component<IAccountsProps, {}> {
   }
 
   private renderSignIn(type: SignInType) {
-    const signInTitle = __DARWIN__ ? 'Sign In' : 'Sign in'
+    const signInTitle = __DARWIN__ ? 'Sign Into' : 'Sign into'
     switch (type) {
       case SignInType.DotCom: {
         return (
           <CallToAction
-            actionTitle={signInTitle}
+            actionTitle={signInTitle + ' GitHub.com'}
             onAction={this.onDotComSignIn}
+            // The DotCom account is shown first, so its sign in/out button should be
+            // focused initially when the dialog is opened.
+            buttonClassName={DialogPreferredFocusClassName}
           >
             <div>
               Sign in to your GitHub.com account to access your repositories.
@@ -88,12 +109,12 @@ export class Accounts extends React.Component<IAccountsProps, {}> {
       case SignInType.Enterprise:
         return (
           <CallToAction
-            actionTitle={signInTitle}
+            actionTitle={signInTitle + ' GitHub Enterprise'}
             onAction={this.onEnterpriseSignIn}
           >
             <div>
-              If you have a GitHub Enterprise or AE account at work, sign in to
-              it to get access to your repositories.
+              If you are using GitHub Enterprise at work, sign in to it to get
+              access to your repositories.
             </div>
           </CallToAction>
         )

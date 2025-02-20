@@ -1,25 +1,34 @@
+import { NotificationCallback } from 'desktop-notifications/dist/notification-callback'
+import { Commit, shortenSHA } from '../../models/commit'
+import { GitHubRepository } from '../../models/github-repository'
+import { PullRequest, getPullRequestCommitRef } from '../../models/pull-request'
 import {
   Repository,
-  isRepositoryWithGitHubRepository,
   RepositoryWithGitHubRepository,
-  isRepositoryWithForkedGitHubRepository,
   getForkContributionTarget,
+  isRepositoryWithForkedGitHubRepository,
+  isRepositoryWithGitHubRepository,
 } from '../../models/repository'
 import { ForkContributionTarget } from '../../models/workflow-preferences'
-import { getPullRequestCommitRef, PullRequest } from '../../models/pull-request'
+import { getVerbForPullRequestReview } from '../../ui/notifications/pull-request-review-helpers'
 import { API, APICheckConclusion, IAPIComment } from '../api'
 import {
-  createCombinedCheckFromChecks,
-  getLatestCheckRunsByName,
-  apiStatusToRefCheck,
-  apiCheckRunToRefCheck,
   IRefCheck,
+  apiCheckRunToRefCheck,
+  apiStatusToRefCheck,
+  createCombinedCheckFromChecks,
+  getLatestCheckRunsById,
 } from '../ci-checks/ci-checks'
-import { AccountsStore } from './accounts-store'
 import { getCommit } from '../git'
-import { GitHubRepository } from '../../models/github-repository'
-import { PullRequestCoordinator } from './pull-request-coordinator'
-import { Commit, shortenSHA } from '../../models/commit'
+import { getBoolean, setBoolean } from '../local-storage'
+import { showNotification } from '../notifications/show-notification'
+import { StatsStore } from '../stats'
+import { truncateWithEllipsis } from '../truncate-with-ellipsis'
+import {
+  ValidNotificationPullRequestReview,
+  isValidNotificationPullRequestReview,
+} from '../valid-notification-pull-request-review'
+import { AccountsStore } from './accounts-store'
 import {
   AliveStore,
   DesktopAliveEvent,
@@ -27,23 +36,11 @@ import {
   IDesktopPullRequestCommentAliveEvent,
   IDesktopPullRequestReviewSubmitAliveEvent,
 } from './alive-store'
-import { setBoolean, getBoolean } from '../local-storage'
-import { showNotification } from '../notifications/show-notification'
-import { StatsStore } from '../stats'
-import { truncateWithEllipsis } from '../truncate-with-ellipsis'
-import { getVerbForPullRequestReview } from '../../ui/notifications/pull-request-review-helpers'
-import {
-  isValidNotificationPullRequestReview,
-  ValidNotificationPullRequestReview,
-} from '../valid-notification-pull-request-review'
-import { NotificationCallback } from 'desktop-notifications/dist/notification-callback'
-import { enablePullRequestCommentNotifications } from '../feature-flag'
+import { PullRequestCoordinator } from './pull-request-coordinator'
 
-type OnChecksFailedCallback = (
+export type OnChecksFailedCallback = (
   repository: RepositoryWithGitHubRepository,
   pullRequest: PullRequest,
-  commitMessage: string,
-  commitSha: string,
   checkRuns: ReadonlyArray<IRefCheck>
 ) => void
 
@@ -115,7 +112,7 @@ export class NotificationsStore {
     async (event, id, userInfo) => this.handleAliveEvent(userInfo, true)
 
   public simulateAliveEvent(event: DesktopAliveEvent) {
-    if (__DEV__) {
+    if (__DEV__ || __RELEASE_CHANNEL__ === 'test') {
       this.handleAliveEvent(event, false)
     }
   }
@@ -138,10 +135,6 @@ export class NotificationsStore {
     event: IDesktopPullRequestCommentAliveEvent,
     skipNotification: boolean
   ) {
-    if (!enablePullRequestCommentNotifications()) {
-      return
-    }
-
     const repository = this.repository
     if (repository === null) {
       return
@@ -149,9 +142,13 @@ export class NotificationsStore {
 
     if (!this.isValidRepositoryForEvent(repository, event)) {
       if (this.isRecentRepositoryEvent(event)) {
-        this.statsStore.recordPullRequestReviewNotiificationFromRecentRepo()
+        this.statsStore.increment(
+          'pullRequestCommentNotificationFromRecentRepoCount'
+        )
       } else {
-        this.statsStore.recordPullRequestReviewNotiificationFromNonRecentRepo()
+        this.statsStore.increment(
+          'pullRequestCommentNotificationFromNonRecentRepoCount'
+        )
       }
       return
     }
@@ -188,12 +185,12 @@ export class NotificationsStore {
       return
     }
 
-    const title = `@${comment.user.login} commented your pull request`
+    const title = `@${comment.user.login} commented on your pull request`
     const body = `${pullRequest.title} #${
       pullRequest.pullRequestNumber
     }\n${truncateWithEllipsis(comment.body, 50)}`
     const onClick = () => {
-      // TODO: this.statsStore.recordPullRequestReviewNotificationClicked(review.state)
+      this.statsStore.increment('pullRequestCommentNotificationClicked')
 
       this.onPullRequestCommentCallback?.(repository, pullRequest, comment)
     }
@@ -210,7 +207,7 @@ export class NotificationsStore {
       onClick,
     })
 
-    // TODO: this.statsStore.recordPullRequestReviewNotificationShown(review.state)
+    this.statsStore.increment('pullRequestCommentNotificationCount')
   }
 
   private async handlePullRequestReviewSubmitEvent(
@@ -224,9 +221,13 @@ export class NotificationsStore {
 
     if (!this.isValidRepositoryForEvent(repository, event)) {
       if (this.isRecentRepositoryEvent(event)) {
-        this.statsStore.recordPullRequestReviewNotiificationFromRecentRepo()
+        this.statsStore.increment(
+          'pullRequestReviewNotificationFromRecentRepoCount'
+        )
       } else {
-        this.statsStore.recordPullRequestReviewNotiificationFromNonRecentRepo()
+        this.statsStore.increment(
+          'pullRequestReviewNotificationFromNonRecentRepoCount'
+        )
       }
       return
     }
@@ -300,9 +301,11 @@ export class NotificationsStore {
 
     if (!this.isValidRepositoryForEvent(repository, event)) {
       if (this.isRecentRepositoryEvent(event)) {
-        this.statsStore.recordChecksFailedNotificationFromRecentRepo()
+        this.statsStore.increment('checksFailedNotificationFromRecentRepoCount')
       } else {
-        this.statsStore.recordChecksFailedNotificationFromNonRecentRepo()
+        this.statsStore.increment(
+          'checksFailedNotificationFromNonRecentRepoCount'
+        )
       }
       return
     }
@@ -396,15 +399,9 @@ export class NotificationsStore {
     const title = 'Pull Request checks failed'
     const body = `${pullRequest.title} #${pullRequest.pullRequestNumber} (${shortSHA})\n${numberOfFailedChecks} ${pluralChecks} not successful.`
     const onClick = () => {
-      this.statsStore.recordChecksFailedNotificationClicked()
+      this.statsStore.increment('checksFailedNotificationClicked')
 
-      this.onChecksFailedCallback?.(
-        repository,
-        pullRequest,
-        commit.summary,
-        commitSHA,
-        checks
-      )
+      this.onChecksFailedCallback?.(repository, pullRequest, checks)
     }
 
     if (skipNotification) {
@@ -419,7 +416,7 @@ export class NotificationsStore {
       onClick,
     })
 
-    this.statsStore.recordChecksFailedNotificationShown()
+    this.statsStore.increment('checksFailedNotificationCount')
   }
 
   private getContributingRepository(
@@ -513,7 +510,7 @@ export class NotificationsStore {
     return API.fromAccount(account)
   }
 
-  private async getChecksForRef(repository: GitHubRepository, ref: string) {
+  public async getChecksForRef(repository: GitHubRepository, ref: string) {
     const { owner, name } = repository
 
     const api = await this.getAPIForRepository(repository)
@@ -540,9 +537,7 @@ export class NotificationsStore {
     }
 
     if (checkRuns !== null) {
-      const latestCheckRunsByName = getLatestCheckRunsByName(
-        checkRuns.check_runs
-      )
+      const latestCheckRunsByName = getLatestCheckRunsById(checkRuns.check_runs)
       checks.push(...latestCheckRunsByName.map(apiCheckRunToRefCheck))
     }
 

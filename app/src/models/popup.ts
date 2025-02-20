@@ -17,7 +17,7 @@ import { Progress } from './progress'
 import { ITextDiff, DiffSelection, ImageDiffType } from './diff'
 import { RepositorySettingsTab } from '../ui/repository-settings/repository-settings'
 import { ICommitMessage } from './commit-message'
-import { IAuthor } from './author'
+import { Author, UnknownAuthor } from './author'
 import { IRefCheck } from '../lib/ci-checks/ci-checks'
 import { GitHubRepository } from './github-repository'
 import { ValidNotificationPullRequestReview } from '../lib/valid-notification-pull-request-review'
@@ -60,6 +60,7 @@ export enum PopupType {
   StashAndSwitchBranch = 'StashAndSwitchBranch',
   ConfirmOverwriteStash = 'ConfirmOverwriteStash',
   ConfirmDiscardStash = 'ConfirmDiscardStash',
+  ConfirmCheckoutCommit = 'ConfirmCheckoutCommit',
   CreateTutorialRepository = 'CreateTutorialRepository',
   ConfirmExitTutorial = 'ConfirmExitTutorial',
   PushRejectedDueToMissingWorkflowScope = 'PushRejectedDueToMissingWorkflowScope',
@@ -92,6 +93,10 @@ export enum PopupType {
   InstallingUpdate = 'InstallingUpdate',
   TestNotifications = 'TestNotifications',
   PullRequestComment = 'PullRequestComment',
+  UnknownAuthors = 'UnknownAuthors',
+  TestIcons = 'TestIcons',
+  ConfirmCommitFilteredChanges = 'ConfirmCommitFilteredChanges',
+  TestAbout = 'TestAbout',
 }
 
 interface IBasePopup {
@@ -146,7 +151,11 @@ export type PopupDetail =
       initialName?: string
       targetCommit?: CommitOneLine
     }
-  | { type: PopupType.SignIn }
+  | {
+      type: PopupType.SignIn
+      isCredentialHelperSignIn?: boolean
+      credentialHelperUrl?: string
+    }
   | { type: PopupType.About }
   | { type: PopupType.InstallGit; path: string }
   | { type: PopupType.PublishRepository; repository: Repository }
@@ -167,8 +176,10 @@ export type PopupDetail =
   | { type: PopupType.CLIInstalled }
   | {
       type: PopupType.GenericGitAuthentication
-      hostname: string
-      retryAction: RetryAction
+      remoteUrl: string
+      username?: string
+      onSubmit: (username: string, password: string) => void
+      onDismiss: () => void
     }
   | {
       type: PopupType.ExternalEditorFailed
@@ -234,6 +245,11 @@ export type PopupDetail =
       stash: IStashEntry
     }
   | {
+      type: PopupType.ConfirmCheckoutCommit
+      repository: Repository
+      commit: CommitOneLine
+    }
+  | {
       type: PopupType.CreateTutorialRepository
       account: Account
       progress?: Progress
@@ -289,7 +305,7 @@ export type PopupDetail =
     }
   | {
       type: PopupType.CommitMessage
-      coAuthors: ReadonlyArray<IAuthor>
+      coAuthors: ReadonlyArray<Author>
       showCoAuthoredBy: boolean
       commitMessage: ICommitMessage | null
       dialogTitle: string
@@ -343,8 +359,6 @@ export type PopupDetail =
       repository: RepositoryWithGitHubRepository
       pullRequest: PullRequest
       shouldChangeRepository: boolean
-      commitMessage: string
-      commitSha: string
       checks: ReadonlyArray<IRefCheck>
     }
   | {
@@ -402,6 +416,22 @@ export type PopupDetail =
       comment: IAPIComment
       shouldCheckoutBranch: boolean
       shouldChangeRepository: boolean
+    }
+  | {
+      type: PopupType.UnknownAuthors
+      authors: ReadonlyArray<UnknownAuthor>
+      onCommit: () => void
+    }
+  | {
+      type: PopupType.TestIcons
+    }
+  | {
+      type: PopupType.ConfirmCommitFilteredChanges
+      onCommitAnyway: () => void
+      showFilesToBeCommitted: () => void
+    }
+  | {
+      type: PopupType.TestAbout
     }
 
 export type Popup = IBasePopup & PopupDetail

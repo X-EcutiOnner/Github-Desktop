@@ -4,6 +4,7 @@ import { Row } from './row'
 import { Account } from '../../models/account'
 import { Select } from './select'
 import { GitEmailNotFoundWarning } from './git-email-not-found-warning'
+import { getStealthEmailForUser } from '../../lib/email'
 
 const OtherEmailSelectValue = 'Other'
 
@@ -18,6 +19,8 @@ interface IGitConfigUserFormProps {
 
   readonly onNameChanged: (name: string) => void
   readonly onEmailChanged: (email: string) => void
+
+  readonly isLoadingGitConfig: boolean
 }
 
 interface IGitConfigUserFormState {
@@ -49,7 +52,8 @@ export class GitConfigUserForm extends React.Component<
     this.state = {
       emailIsOther:
         this.accountEmails.length > 0 &&
-        !this.accountEmails.includes(this.props.email),
+        !this.accountEmails.includes(this.props.email) &&
+        !this.props.isLoadingGitConfig,
     }
   }
 
@@ -71,7 +75,8 @@ export class GitConfigUserForm extends React.Component<
       this.setState({
         emailIsOther:
           this.accountEmails.length > 0 &&
-          !this.accountEmails.includes(this.props.email),
+          !this.accountEmails.includes(this.props.email) &&
+          !this.props.isLoadingGitConfig,
       })
     }
 
@@ -101,10 +106,12 @@ export class GitConfigUserForm extends React.Component<
         </Row>
         {this.renderEmailDropdown()}
         {this.renderEmailTextBox()}
-        <GitEmailNotFoundWarning
-          accounts={this.accounts}
-          email={this.props.email}
-        />
+        {this.state.emailIsOther ? (
+          <GitEmailNotFoundWarning
+            accounts={this.accounts}
+            email={this.props.email}
+          />
+        ) : null}
       </div>
     )
   }
@@ -114,10 +121,28 @@ export class GitConfigUserForm extends React.Component<
       return null
     }
 
+    const { dotComAccount } = this.props
+
     const dotComEmails =
-      this.props.dotComAccount?.emails.map(e => e.email) ?? []
+      dotComAccount?.emails.filter(x => x.verified).map(e => e.email) ?? []
+
+    if (dotComAccount) {
+      const { id, login, endpoint } = dotComAccount
+      const stealthEmail = getStealthEmailForUser(id, login, endpoint)
+
+      if (
+        !dotComEmails
+          .map(x => x.toLowerCase())
+          .includes(stealthEmail.toLowerCase())
+      ) {
+        dotComEmails.push(stealthEmail)
+      }
+    }
+
     const enterpriseEmails =
-      this.props.enterpriseAccount?.emails.map(e => e.email) ?? []
+      this.props.enterpriseAccount?.emails
+        .filter(x => x.verified)
+        .map(e => e.email) ?? []
 
     // When the user signed in both accounts, show a suffix to differentiate
     // the origin of each email address
@@ -164,6 +189,8 @@ export class GitConfigUserForm extends React.Component<
     // presented independently, without the email dropdown, not when presented
     // as a consequence of the option "Other" selected in the dropdown.
     const label = this.state.emailIsOther ? undefined : 'Email'
+    // If there is not a label, provide a screen reader announcement.
+    const ariaLabel = label ? undefined : 'Email'
 
     return (
       <Row>
@@ -174,6 +201,9 @@ export class GitConfigUserForm extends React.Component<
           value={this.props.email}
           disabled={this.props.disabled}
           onValueChanged={this.props.onEmailChanged}
+          ariaLabel={ariaLabel}
+          ariaDescribedBy="git-email-not-found-warning-for-screen-readers"
+          ariaControls="git-email-not-found-warning-for-screen-readers"
         />
       </Row>
     )
